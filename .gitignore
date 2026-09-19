@@ -1,0 +1,24 @@
+node_modules/
+.env.*
+!.env.example
+.env
+dist/
+build/
+coverage/
+data/
+
+# Local runtime and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+private/storage/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
