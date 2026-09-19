@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ArrowUpRight, ExternalLink, Play, X } from 'lucide-react'
+import { apiUrl } from '../api'
 import type { PortfolioItem } from '../types'
 
 type Filter = 'all' | 'post' | 'reel' | 'website' | 'branding' | 'other'
@@ -35,7 +36,7 @@ function WorkCard({ item, onOpen }: { item: PortfolioItem; onOpen: (item: Portfo
   return (
     <article className={`work-card work-card--${item.type}`}>
       <button className="work-card__media" onClick={() => isInteractive && onOpen(item)} aria-label={`${item.type === 'post' ? 'Open' : 'Play'} ${item.title}`}>
-        <img src={item.thumbnail_url} alt="" loading="lazy" />
+        <img src={apiUrl(item.thumbnail_url)} alt="" loading="lazy" />
         {item.type === 'reel' && <span className="play-button"><Play size={18} fill="currentColor" /></span>}
         {item.type === 'post' && <span className="media-cue">View still <ArrowUpRight size={16} /></span>}
       </button>
@@ -49,7 +50,7 @@ function MediaModal({ item, onClose }: { item: PortfolioItem; onClose: () => voi
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className={`media-modal media-modal--${item.type}`} role="dialog" aria-modal="true" aria-label={item.title}>
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close media viewer"><X size={22} /></button>
-        {item.type === 'reel' && item.media_url ? <video src={item.media_url} poster={item.thumbnail_url} controls autoPlay /> : <img src={item.media_url || item.thumbnail_url} alt={item.title} />}
+        {item.type === 'reel' && item.media_url ? <video src={apiUrl(item.media_url)} poster={apiUrl(item.thumbnail_url)} controls autoPlay /> : <img src={apiUrl(item.media_url || item.thumbnail_url)} alt={item.title} />}
         <div className="modal-caption"><span className="card-kicker">{item.client} / {item.date}</span><h3>{item.title}</h3><p>{item.description}</p></div>
       </div>
     </div>

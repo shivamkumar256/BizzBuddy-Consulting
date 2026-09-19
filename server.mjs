@@ -11,6 +11,17 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.PORT || 8787)
+const isProduction = process.env.NODE_ENV === 'production'
+const configuredFrontendOrigin = String(process.env.FRONTEND_URL || '').replace(/\/$/, '')
+const allowedOrigins = new Set([
+  configuredFrontendOrigin,
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'http://127.0.0.1:5175',
+].filter(Boolean))
 const required = ['ADMIN_EMAIL', 'ADMIN_PASSWORD', 'SESSION_SECRET']
 const missing = required.filter((key) => !process.env[key])
 if (missing.length) throw new Error(`Missing required environment values: ${missing.join(', ')}. Copy .env.example to .env and set them.`)
@@ -32,9 +43,22 @@ else db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').ru
 db.prepare("DELETE FROM items WHERE client = 'Internal placeholder' AND (title LIKE 'Your %' OR tags = ?)").run(JSON.stringify(['Internal placeholder']))
 
 const app = express()
+app.use((request, response, next) => {
+  const origin = request.headers.origin
+  if (origin && allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Access-Control-Allow-Credentials', 'true')
+    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
+    response.setHeader('Vary', 'Origin')
+  }
+  if (request.method === 'OPTIONS') return response.sendStatus(origin && allowedOrigins.has(origin) ? 204 : 403)
+  next()
+})
 app.use(express.json({ limit: '2mb' }))
 app.use(cookieParser(process.env.SESSION_SECRET))
 const sessions = new Map()
+const sessionCookieOptions = { signed: true, httpOnly: true, sameSite: isProduction ? 'none' : 'lax', secure: isProduction, maxAge: 8 * 60 * 60 * 1000 }
 const auth = (request, response, next) => { const token = request.signedCookies.bb_session; const session = token && sessions.get(token); if (!session || session.expires < Date.now()) return response.status(401).json({ error: 'Authentication required' }); request.user = session; next() }
 const serialize = (item) => ({ ...item, featured: Boolean(item.featured), tags: JSON.parse(item.tags || '[]') })
 const validTypes = new Set(['post', 'reel', 'website', 'branding', 'other'])
@@ -45,8 +69,8 @@ const normalize = (body) => {
   if (websiteUrl && !/^https?:\/\//i.test(websiteUrl)) throw new Error('Website URL must begin with http:// or https://.')
   return { type: body.type, title: String(body.title).trim().slice(0, 200), description: String(body.description || '').slice(0, 2000), thumbnail_url: String(body.thumbnail_url || '').slice(0, 1000), media_url: String(body.media_url || '').slice(0, 1000), client: String(body.client || '').slice(0, 200), website_url: websiteUrl.slice(0, 1000), category: String(body.category || body.type).slice(0, 100), tags: JSON.stringify(Array.isArray(body.tags) ? body.tags.map(String).slice(0, 20) : []), date: String(body.date || '').slice(0, 30), featured: body.featured ? 1 : 0, status: body.status }
 }
-app.post('/api/auth/login', async (request, response) => { const { email, password } = request.body || {}; const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email); if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) return response.status(401).json({ error: 'Invalid email or password' }); const token = crypto.randomBytes(32).toString('hex'); sessions.set(token, { userId: user.id, email: user.email, expires: Date.now() + 8 * 60 * 60 * 1000 }); response.cookie('bb_session', token, { signed: true, httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 8 * 60 * 60 * 1000 }); response.json({ email: user.email }) })
-app.post('/api/auth/logout', (request, response) => { const token = request.signedCookies.bb_session; if (token) sessions.delete(token); response.clearCookie('bb_session'); response.status(204).end() })
+app.post('/api/auth/login', async (request, response) => { const { email, password } = request.body || {}; const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email); if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) return response.status(401).json({ error: 'Invalid email or password' }); const token = crypto.randomBytes(32).toString('hex'); sessions.set(token, { userId: user.id, email: user.email, expires: Date.now() + 8 * 60 * 60 * 1000 }); response.cookie('bb_session', token, sessionCookieOptions); response.json({ email: user.email }) })
+app.post('/api/auth/logout', (request, response) => { const token = request.signedCookies.bb_session; if (token) sessions.delete(token); response.clearCookie('bb_session', sessionCookieOptions); response.status(204).end() })
 app.get('/api/auth/me', auth, (request, response) => response.json({ email: request.user.email }))
 app.get('/api/public/items', (request, response) => response.json(db.prepare("SELECT * FROM items WHERE status = 'published' ORDER BY featured DESC, updated_at DESC").all().map(serialize)))
 app.get('/api/admin/items', auth, (request, response) => response.json(db.prepare('SELECT * FROM items ORDER BY updated_at DESC').all().map(serialize)))

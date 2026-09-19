@@ -4,6 +4,7 @@ import { ContactSection } from './components/ContactSection'
 import { PortfolioShowcase } from './components/PortfolioShowcase'
 import { SectionHeading } from './components/SectionHeading'
 import { AdminApp } from './admin/AdminApp'
+import { apiFetch } from './api'
 import type { PortfolioItem } from './types'
 
 const navItems = [['Home', '#top'], ['About', '#about'], ['Services', '#services'], ['Our Work', '#work'], ['Contact', '#contact']]
@@ -22,7 +23,7 @@ function PublicApp() {
       return () => document.body.classList.remove('menu-open')
     }, [menuOpen])
     useEffect(() => {
-      fetch('/api/public/items')
+      apiFetch('/api/public/items')
         .then((response) => { if (!response.ok) throw new Error('Unable to load portfolio'); return response.json() })
         .then((data: PortfolioItem[]) => { setItems(data.filter((item) => item.status === 'published')); setPortfolioState('ready') })
         .catch(() => { setItems([]); setPortfolioState('error') })
