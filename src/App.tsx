@@ -4,7 +4,7 @@ import { ContactSection } from './components/ContactSection'
 import { PortfolioShowcase } from './components/PortfolioShowcase'
 import { SectionHeading } from './components/SectionHeading'
 import { AdminApp } from './admin/AdminApp'
-import { apiFetch } from './api'
+import { apiFetch, apiUrl } from './api'
 import type { PortfolioItem } from './types'
 
 const navItems = [['Home', '#top'], ['About', '#about'], ['Services', '#services'], ['Our Work', '#work'], ['Contact', '#contact']]
@@ -67,7 +67,7 @@ function PublicApp() {
           <section className="manifesto reveal" id="about"><div className="manifesto-label"><span className="eyebrow">01 / About</span><span className="line" /></div><div><p className="statement">Make the next move <em>make sense.</em></p><p className="body-copy">BizzBuddy Consulting brings practical business thinking and sharp digital craft together. We help ambitious businesses communicate clearly, work smarter, and create experiences that earn attention.</p></div></section>
           <section className="services-section reveal" id="services"><SectionHeading eyebrow="02 / Services" title="A better way forward." description="Focused support across the moments that shape how your business is understood and experienced." /><div className="service-list">{services.map(([number, title, copy, Icon]) => <div className="service-row" key={number}><span>{number}</span><div className="service-title"><span className="service-icon"><Icon size={18} /></span><h3>{title}</h3></div><p>{copy}</p><MoveUpRight size={22} /></div>)}</div></section>
           <section className="work-section reveal" id="work"><div className="work-header"><SectionHeading eyebrow="03 / Our work" title="Selected work" description="Selected work created by BizzBuddy Consulting." /></div>{portfolioState === 'loading' ? <div className="empty-state"><h3>Selected work</h3><p>New BizzBuddy Consulting projects will appear here.</p></div> : <PortfolioShowcase items={publishedPortfolio} />}</section>
-          {featured.length > 0 && <section className="featured-section reveal"><div className="featured-top"><span className="eyebrow">Featured work</span><span>Selected highlights <ArrowUpRight size={16} /></span></div><div className="featured-track">{featured.map((item) => <a className="featured-card" href="#work" key={item.id}><img src={item.thumbnail_url} alt="" /><div><span className="card-kicker">{item.type}</span><h3>{item.title}</h3></div></a>)}</div></section>}
+          {featured.length > 0 && <section className="featured-section reveal"><div className="featured-top"><span className="eyebrow">Featured work</span><span>Selected highlights <ArrowUpRight size={16} /></span></div><div className="featured-track">{featured.map((item) => <a className="featured-card" href="#work" key={item.id}><img src={apiUrl(item.thumbnail_url)} alt="" /><div><span className="card-kicker">{item.type}</span><h3>{item.title}</h3></div></a>)}</div></section>}
           <section className="process-section reveal"><div className="process-intro"><span className="eyebrow">04 / How we work</span><h2>Clarity at every <em>step.</em></h2><p>A considered process keeps the work focused, useful, and moving in the right direction.</p></div><div className="process-grid">{process.map(([number, title, copy]) => <article key={number}><span className="process-number">{number}</span><h3>{title}</h3><p>{copy}</p></article>)}</div></section>
           <ContactSection />
         </main>

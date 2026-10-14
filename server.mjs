@@ -12,9 +12,12 @@ import { fileURLToPath } from 'node:url'
 const root = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.PORT || 8787)
 const isProduction = process.env.NODE_ENV === 'production'
-const configuredFrontendOrigin = String(process.env.FRONTEND_URL || '').replace(/\/$/, '')
+const configuredFrontendOrigins = String(process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean)
 const allowedOrigins = new Set([
-  configuredFrontendOrigin,
+  ...configuredFrontendOrigins,
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
@@ -25,21 +28,29 @@ const allowedOrigins = new Set([
 const required = ['ADMIN_EMAIL', 'ADMIN_PASSWORD', 'SESSION_SECRET']
 const missing = required.filter((key) => !process.env[key])
 if (missing.length) throw new Error(`Missing required environment values: ${missing.join(', ')}. Copy .env.example to .env and set them.`)
-if (process.env.ADMIN_PASSWORD.length < 10) throw new Error('ADMIN_PASSWORD must be at least 10 characters.')
+// Normalize admin credentials so a stray leading/trailing space or email
+// capitalization (common when values are pasted into a host dashboard) does not
+// cause an otherwise-valid sign-in to fail. Secrets are never logged or hardcoded.
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const adminEmail = normalizeEmail(process.env.ADMIN_EMAIL)
+const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim()
+if (adminPassword.length < 10) throw new Error('ADMIN_PASSWORD must be at least 10 characters.')
 
-fs.mkdirSync(path.join(root, 'data'), { recursive: true })
-fs.mkdirSync(path.join(root, 'private', 'storage', 'uploads'), { recursive: true })
-const db = new Database(path.join(root, 'data', 'portfolio.db'))
+const dataDir = process.env.DATA_DIR || path.join(root, 'data')
+const uploadDir = process.env.UPLOAD_DIR || path.join(root, 'private', 'storage', 'uploads')
+fs.mkdirSync(dataDir, { recursive: true })
+fs.mkdirSync(uploadDir, { recursive: true })
+const db = new Database(path.join(dataDir, 'portfolio.db'))
 db.pragma('journal_mode = WAL')
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, thumbnail_url TEXT NOT NULL DEFAULT '', media_url TEXT NOT NULL DEFAULT '', client TEXT NOT NULL DEFAULT '', website_url TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', date TEXT NOT NULL DEFAULT '', featured INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 `)
 const now = () => new Date().toISOString()
-const configuredPasswordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 12)
+const configuredPasswordHash = bcrypt.hashSync(adminPassword, 12)
 const existingAdmin = db.prepare('SELECT id FROM users LIMIT 1').get()
-if (!existingAdmin) db.prepare('INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').run(crypto.randomUUID(), process.env.ADMIN_EMAIL, configuredPasswordHash, now())
-else db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').run(process.env.ADMIN_EMAIL, configuredPasswordHash, existingAdmin.id)
+if (!existingAdmin) db.prepare('INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').run(crypto.randomUUID(), adminEmail, configuredPasswordHash, now())
+else db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').run(adminEmail, configuredPasswordHash, existingAdmin.id)
 db.prepare("DELETE FROM items WHERE client = 'Internal placeholder' AND (title LIKE 'Your %' OR tags = ?)").run(JSON.stringify(['Internal placeholder']))
 
 const app = express()
@@ -69,21 +80,22 @@ const normalize = (body) => {
   if (websiteUrl && !/^https?:\/\//i.test(websiteUrl)) throw new Error('Website URL must begin with http:// or https://.')
   return { type: body.type, title: String(body.title).trim().slice(0, 200), description: String(body.description || '').slice(0, 2000), thumbnail_url: String(body.thumbnail_url || '').slice(0, 1000), media_url: String(body.media_url || '').slice(0, 1000), client: String(body.client || '').slice(0, 200), website_url: websiteUrl.slice(0, 1000), category: String(body.category || body.type).slice(0, 100), tags: JSON.stringify(Array.isArray(body.tags) ? body.tags.map(String).slice(0, 20) : []), date: String(body.date || '').slice(0, 30), featured: body.featured ? 1 : 0, status: body.status }
 }
-app.post('/api/auth/login', async (request, response) => { const { email, password } = request.body || {}; const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email); if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) return response.status(401).json({ error: 'Invalid email or password' }); const token = crypto.randomBytes(32).toString('hex'); sessions.set(token, { userId: user.id, email: user.email, expires: Date.now() + 8 * 60 * 60 * 1000 }); response.cookie('bb_session', token, sessionCookieOptions); response.json({ email: user.email }) })
+app.post('/api/auth/login', async (request, response) => { const email = normalizeEmail((request.body || {}).email); const password = String((request.body || {}).password || '').trim(); const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email); if (!user || !(await bcrypt.compare(password, user.password_hash))) return response.status(401).json({ error: 'Invalid email or password' }); const token = crypto.randomBytes(32).toString('hex'); sessions.set(token, { userId: user.id, email: user.email, expires: Date.now() + 8 * 60 * 60 * 1000 }); response.cookie('bb_session', token, sessionCookieOptions); response.json({ email: user.email }) })
 app.post('/api/auth/logout', (request, response) => { const token = request.signedCookies.bb_session; if (token) sessions.delete(token); response.clearCookie('bb_session', sessionCookieOptions); response.status(204).end() })
 app.get('/api/auth/me', auth, (request, response) => response.json({ email: request.user.email }))
+app.get('/api/health', (request, response) => response.json({ status: 'ok', service: 'bizzbuddy-portfolio' }))
 app.get('/api/public/items', (request, response) => response.json(db.prepare("SELECT * FROM items WHERE status = 'published' ORDER BY featured DESC, updated_at DESC").all().map(serialize)))
 app.get('/api/admin/items', auth, (request, response) => response.json(db.prepare('SELECT * FROM items ORDER BY updated_at DESC').all().map(serialize)))
 app.post('/api/admin/items', auth, (request, response) => { try { const value = normalize(request.body); const id = crypto.randomUUID(); const timestamp = now(); db.prepare('INSERT INTO items (id,type,title,description,thumbnail_url,media_url,client,website_url,category,tags,date,featured,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, ...Object.values(value), timestamp, timestamp); response.status(201).json(serialize(db.prepare('SELECT * FROM items WHERE id = ?').get(id))) } catch (error) { response.status(400).json({ error: error.message }) } })
 app.put('/api/admin/items/:id', auth, (request, response) => { try { const value = normalize(request.body); const timestamp = now(); db.prepare('UPDATE items SET type=?,title=?,description=?,thumbnail_url=?,media_url=?,client=?,website_url=?,category=?,tags=?,date=?,featured=?,status=?,updated_at=? WHERE id=?').run(...Object.values(value), timestamp, request.params.id); const item = db.prepare('SELECT * FROM items WHERE id = ?').get(request.params.id); if (!item) return response.status(404).json({ error: 'Item not found' }); response.json(serialize(item)) } catch (error) { response.status(400).json({ error: error.message }) } })
 app.delete('/api/admin/items/:id', auth, (request, response) => { const result = db.prepare('DELETE FROM items WHERE id = ?').run(request.params.id); if (!result.changes) return response.status(404).json({ error: 'Item not found' }); response.status(204).end() })
-const upload = multer({ dest: path.join(root, 'private', 'storage', 'uploads'), limits: { fileSize: 50 * 1024 * 1024 }, fileFilter: (request, file, callback) => callback(null, /^(image\/(jpeg|png|webp|gif)|video\/mp4|video\/webm)$/.test(file.mimetype)) })
+const upload = multer({ dest: uploadDir, limits: { fileSize: 50 * 1024 * 1024 }, fileFilter: (request, file, callback) => callback(null, /^(image\/(jpeg|png|webp|gif)|video\/mp4|video\/webm)$/.test(file.mimetype)) })
 app.post('/api/admin/uploads', auth, upload.single('file'), (request, response) => { if (!request.file) return response.status(400).json({ error: 'Upload an image, MP4, WebM, PNG, JPEG, WebP, or GIF.' }); response.json({ url: `/api/media/${request.file.filename}`, filename: request.file.originalname, mimetype: request.file.mimetype }) })
 app.get('/api/media/:filename', (request, response) => {
   const url = `/api/media/${path.basename(request.params.filename)}`
   const referenced = db.prepare("SELECT id FROM items WHERE status = 'published' AND (thumbnail_url = ? OR media_url = ?) LIMIT 1").get(url, url)
   if (!referenced) return response.status(404).end()
-  response.sendFile(path.join(root, 'private', 'storage', 'uploads', path.basename(request.params.filename)))
+  response.sendFile(path.join(uploadDir, path.basename(request.params.filename)))
 })
 
 const dist = path.join(root, 'dist')
